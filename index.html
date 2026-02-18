@@ -99,10 +99,29 @@
       display: inline-block;
       margin-top: 6px;
     }
+
+    /* Error banner */
+    .error-banner {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 20000;
+      background: #b00020;
+      color: white;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-family: Arial, sans-serif;
+      max-width: 380px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+      display: none;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+
+  <div class="error-banner" id="errorBanner"></div>
 
   <div class="panel">
     <h2>GTA RP Map</h2>
@@ -133,6 +152,7 @@
         then upload/commit it to GitHub so everyone sees it.
       </div>
       <button id="exportBtn">Export pins.json (download)</button>
+
       <div class="row">
         <small><b>Import pins.json</b> (merge or replace):</small>
         <input type="file" id="importFile" accept=".json,application/json" />
@@ -141,14 +161,15 @@
           <button id="importReplaceBtn" class="danger">Import (replace)</button>
         </div>
       </div>
+
       <button id="clearLocalBtn" class="danger">Clear local unsaved edits</button>
     </div>
 
     <div class="divider"></div>
 
     <div class="row muted">
-      <b>Setup note:</b> You MUST set your map image pixel size below in the code:
-      <br/>Search for <code>IMAGE_WIDTH</code> / <code>IMAGE_HEIGHT</code>.
+      <b>Setup note:</b> Your map image pixel size is set below:
+      <br/>Width: <code>6144</code>, Height: <code>9216</code>
     </div>
   </div>
 
@@ -178,39 +199,43 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    /*****************************************************************
-     *  EDIT THESE TWO VALUES:
-     *  Right-click map.jpg -> Properties -> Details -> Width/Height
-     *****************************************************************/
-    const IMAGE_WIDTH  = 6144; // <-- set to your map.jpg width in pixels
-    const IMAGE_HEIGHT = 9216; // <-- set to your map.jpg height in pixels
-
+    // ---- CONFIG ----
+    const IMAGE_WIDTH  = 6144; // width in pixels
+    const IMAGE_HEIGHT = 9216; // height in pixels
     const MAP_IMAGE_FILENAME = "map.jpg";
     const PINS_FILENAME = "pins.json";
-
-    // Local unsaved edits are stored in browser storage so you don't lose work.
     const LOCAL_STORAGE_KEY = "gta_rp_map_local_pins_v1";
 
-    // --- Leaflet Simple CRS image map ---
+    // ---- ERROR UI ----
+    const errorBanner = document.getElementById("errorBanner");
+    function showError(msg) {
+      console.error(msg);
+      errorBanner.textContent = msg;
+      errorBanner.style.display = "block";
+    }
+
+    // ---- Basic resource checks (helps debug 404s) ----
+    async function verifyResource(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to load ${url} (HTTP ${res.status})`);
+      return res;
+    }
+
+    // ---- LEAFLET MAP INIT ----
     const map = L.map("map", { crs: L.CRS.Simple, minZoom: -2, maxZoom: 4 });
 
-    // Bounds: [[top,left],[bottom,right]] using pixel-space.
+    // Bounds must be [[y1,x1],[y2,x2]] = [[top,left],[bottom,right]]
     const bounds = [[0, 0], [IMAGE_HEIGHT, IMAGE_WIDTH]];
-    L.imageOverlay(MAP_IMAGE_FILENAME, bounds).addTo(map);
-    map.fitBounds(bounds);
 
-    // Keep map from panning infinitely away
-    map.setMaxBounds(bounds.pad(0.2));
-
-    // State
-    let pins = [];         // combined pins shown on map
-    let basePins = [];     // loaded from pins.json
-    let localPins = [];    // unsaved pins added in-browser
-    let markers = [];      // leaflet marker instances
-    let categoryVisibility = new Map(); // category -> visible boolean
+    // ---- App State ----
+    let pins = [];
+    let basePins = [];
+    let localPins = [];
+    let markers = [];
+    let categoryVisibility = new Map();
     let pendingLatLng = null;
 
-    // UI elements
+    // ---- UI Elements ----
     const pinCountEl = document.getElementById("pinCount");
     const categoryChipsEl = document.getElementById("categoryChips");
     const exportBtn = document.getElementById("exportBtn");
@@ -230,6 +255,17 @@
 
     function esc(s) {
       return (s ?? "").toString().replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function normalizePin(p) {
+      if (!p) return null;
+      const name = (p.name ?? "").toString().trim() || "Untitled";
+      const category = (p.category ?? "Uncategorized").toString().trim() || "Uncategorized";
+      const note = (p.note ?? "").toString();
+      const x = Number(p.x);
+      const y = Number(p.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { name, category, note, x, y };
     }
 
     function loadLocalPins() {
@@ -257,19 +293,7 @@
     }
 
     function combinedPins() {
-      // base pins + local pins (local may duplicate; that's ok)
-      return [...basePins, ...localPins].map(p => normalizePin(p)).filter(Boolean);
-    }
-
-    function normalizePin(p) {
-      if (!p) return null;
-      const name = (p.name ?? "").toString().trim() || "Untitled";
-      const category = (p.category ?? "Uncategorized").toString().trim() || "Uncategorized";
-      const note = (p.note ?? "").toString();
-      const x = Number(p.x);
-      const y = Number(p.y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      return { name, category, note, x, y };
+      return [...basePins, ...localPins].map(normalizePin).filter(Boolean);
     }
 
     function rebuildCategoryUI() {
@@ -277,11 +301,9 @@
       categoryChipsEl.innerHTML = "";
       categoryList.innerHTML = "";
 
-      // ensure visibility defaults true for new categories
       cats.forEach(cat => {
         if (!categoryVisibility.has(cat)) categoryVisibility.set(cat, true);
 
-        // checkbox chip
         const label = document.createElement("label");
         label.className = "chip";
 
@@ -300,7 +322,6 @@
         label.appendChild(span);
         categoryChipsEl.appendChild(label);
 
-        // datalist option
         const opt = document.createElement("option");
         opt.value = cat;
         categoryList.appendChild(opt);
@@ -314,7 +335,6 @@
 
     function renderPins() {
       clearMarkers();
-
       const visiblePins = pins.filter(p => categoryVisibility.get(p.category) !== false);
 
       visiblePins.forEach(p => {
@@ -333,17 +353,164 @@
 
     function openModal(latlng) {
       pendingLatLng = latlng;
-
-      // For Simple CRS: latlng is {lat: y, lng: x}
       const x = Math.round(latlng.lng);
       const y = Math.round(latlng.lat);
 
       coordDisplay.textContent = `x:${x}  y:${y}`;
       pinTitle.value = "";
       pinCategory.value = "";
-      pinNotes.
+      pinNotes.value = "";
 
+      modalBackdrop.style.display = "flex";
+      pinTitle.focus();
+    }
 
+    function closeModal() {
+      modalBackdrop.style.display = "none";
+      pendingLatLng = null;
+    }
 
+    cancelPinBtn.addEventListener("click", closeModal);
+    modalBackdrop.addEventListener("click", (e) => {
+      if (e.target === modalBackdrop) closeModal();
+    });
 
+    addPinBtn.addEventListener("click", () => {
+      if (!pendingLatLng) return;
 
+      const x = Math.round(pendingLatLng.lng);
+      const y = Math.round(pendingLatLng.lat);
+
+      const newPin = normalizePin({
+        name: pinTitle.value.trim() || "Untitled",
+        category: pinCategory.value.trim() || "Uncategorized",
+        note: pinNotes.value || "",
+        x, y
+      });
+
+      localPins.push(newPin);
+      saveLocalPins();
+
+      pins = combinedPins();
+      rebuildCategoryUI();
+      renderPins();
+
+      closeModal();
+    });
+
+    // Click map to add pin
+    map.on("click", (e) => openModal(e.latlng));
+
+    // Export pins.json (combined)
+    exportBtn.addEventListener("click", () => {
+      const exportPins = combinedPins();
+      exportPins.sort((a,b) => (a.category.localeCompare(b.category) || a.name.localeCompare(b.name)));
+
+      const blob = new Blob([JSON.stringify(exportPins, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "pins.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      URL.revokeObjectURL(url);
+      alert("Downloaded pins.json. Upload/commit it to your GitHub repo to share with everyone.");
+    });
+
+    function readImportedFile() {
+      return new Promise((resolve, reject) => {
+        const file = importFile.files?.[0];
+        if (!file) return reject(new Error("Choose a pins.json file first."));
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const data = JSON.parse(reader.result);
+            if (!Array.isArray(data)) throw new Error("JSON must be an array.");
+            resolve(data.map(normalizePin).filter(Boolean));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error("Failed to read file."));
+        reader.readAsText(file);
+      });
+    }
+
+    importMergeBtn.addEventListener("click", async () => {
+      try {
+        const imported = await readImportedFile();
+        localPins.push(...imported);
+        saveLocalPins();
+        pins = combinedPins();
+        rebuildCategoryUI();
+        renderPins();
+        alert("Imported (merge) into local edits. Export + commit pins.json to share.");
+      } catch (e) {
+        alert(e.message || String(e));
+      }
+    });
+
+    importReplaceBtn.addEventListener("click", async () => {
+      try {
+        const imported = await readImportedFile();
+        basePins = [];
+        localPins = imported;
+        saveLocalPins();
+        pins = combinedPins();
+        rebuildCategoryUI();
+        renderPins();
+        alert("Imported (replace) into local state. Export + commit pins.json to share.");
+      } catch (e) {
+        alert(e.message || String(e));
+      }
+    });
+
+    clearLocalBtn.addEventListener("click", () => {
+      if (!confirm("Clear local unsaved edits on this device/browser? (Does not affect pins.json on GitHub)")) return;
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      localPins = [];
+      pins = combinedPins();
+      rebuildCategoryUI();
+      renderPins();
+    });
+
+    // ---- INIT ----
+    (async function init() {
+      try {
+        // Verify resources (shows clear error if 404)
+        await verifyResource(MAP_IMAGE_FILENAME);
+        await verifyResource(PINS_FILENAME);
+
+        // Add the image overlay
+        L.imageOverlay(MAP_IMAGE_FILENAME, bounds).addTo(map);
+
+        // Fit and constrain view
+        map.fitBounds(bounds);
+        map.setMaxBounds(bounds.pad(0.2));
+
+        // Load pins
+        loadLocalPins();
+        await loadBasePins();
+        pins = combinedPins();
+        rebuildCategoryUI();
+        renderPins();
+      } catch (err) {
+        showError(
+          "Map failed to load.\n\n" +
+          (err?.message || String(err)) +
+          "\n\nQuick checks:\n" +
+          "• Is map.jpg in the repo root and named exactly map.jpg?\n" +
+          "• Is pins.json in the repo root and valid JSON?\n" +
+          "• Hard refresh (Ctrl+Shift+R) after committing changes."
+        );
+      }
+    })();
+
+    // Cosmetic: ignore missing favicon.ico (harmless)
+    // If you want, upload a favicon.ico to repo root.
+  </script>
+</body>
+</html>
