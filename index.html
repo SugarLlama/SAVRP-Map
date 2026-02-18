@@ -182,8 +182,8 @@
      *  EDIT THESE TWO VALUES:
      *  Right-click map.jpg -> Properties -> Details -> Width/Height
      *****************************************************************/
-    const IMAGE_WIDTH  = 9216; // <-- set to your map.jpg width in pixels
-    const IMAGE_HEIGHT = 6144; // <-- set to your map.jpg height in pixels
+    const IMAGE_WIDTH  = 6144; // <-- set to your map.jpg width in pixels
+    const IMAGE_HEIGHT = 9216; // <-- set to your map.jpg height in pixels
 
     const MAP_IMAGE_FILENAME = "map.jpg";
     const PINS_FILENAME = "pins.json";
@@ -195,7 +195,7 @@
     const map = L.map("map", { crs: L.CRS.Simple, minZoom: -2, maxZoom: 4 });
 
     // Bounds: [[top,left],[bottom,right]] using pixel-space.
-    const bounds = [[0,0],[IMAGE_HEIGHT, IMAGE_WIDTH]];
+    const bounds = [[0, 0], [IMAGE_HEIGHT, IMAGE_WIDTH]];
     L.imageOverlay(MAP_IMAGE_FILENAME, bounds).addTo(map);
     map.fitBounds(bounds);
 
@@ -342,6 +342,7 @@
       pinTitle.value = "";
       pinCategory.value = "";
       pinNotes.
+
 
 
 
